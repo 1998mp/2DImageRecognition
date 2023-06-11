@@ -1,0 +1,28 @@
+https://medium.com/@yogeshkumarpilli/how-to-install-detectron2-on-windows-10-or-11-2021-aug-with-the-latest-build-v0-5-c7333909676f
+
+https://anaconda.org/anaconda/git
+https://anaconda.org/conda-forge/ninja
+https://anaconda.org/conda-forge/pycocotools
+https://anaconda.org/pytorch/torchvision
+https://anaconda.org/conda-forge/m2w64-gcc
+
+conda install -c anaconda git
+conda install -c conda-forge ninja
+conda install -c conda-forge pycocotools
+conda install -c pytorch torchvision
+conda install -c conda-forge m2w64-gcc
+
+Install Microsoft Visual C++ (Microsoft Visual Studio Installer)
+
+git clone https://github.com/facebookresearch/detectron2.git
+python -m pip install -e detectron2
+
+
+conda install -c conda-forge opencv
+
+
+conda install -c pytorch torchvision cudatoolkit=10.2 pytorch
+conda install -c conda-forge torchvision
+conda install -c conda-forge pygit2
+conda install -c conda-forge pgzip
+
