@@ -1,4 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
 import glob
 import multiprocessing as mp
@@ -15,16 +14,36 @@ from detectron2.data.detection_utils import read_image
 from detectron2.utils.logger import setup_logger
 
 from predictor import VisualizationDemo
+from pypylon import pylon
+
+from setup import *
 
 # constants
-WINDOW_NAME = "COCO detections"
+WINDOW_NAME = s_window_name
+
+
+def camera_setup():
+    tlf = pylon.TlFactory.GetInstance()
+    tl = tlf.CreateTl('BaslerGigE')
+    cam_info = tl.CreateDeviceInfo()
+    cam_info.SetIpAddress('169.254.1.1')
+    _camera = pylon.InstantCamera(tlf.CreateDevice(cam_info))
+    _camera.Open()
+    _camera.PixelFormat = "BayerRG8"  # camera.PixelFormat = "Mono8"
+    # _camera.Width = _camera.Width.GetMax()  # 2456
+    # _camera.Height = _camera.Height.GetMax()  # 2052
+    # _camera.CenterX.SetValue(True)
+    # _camera.CenterY.SetValue(True)
+    _camera.Width = 1100
+    _camera.Height = 1500
+    return _camera
 
 
 def setup_cfg(args):
     # load config from file and command-line arguments
     cfg = get_cfg()
     # To use demo for Panoptic-DeepLab, please uncomment the following two lines.
-    # from detectron2.projects.panoptic_deeplab import add_panoptic_deeplab_config  # noqa
+    # from detectron2.projects.panoptic_deeplab import add_panoptic_deeplab_config
     # add_panoptic_deeplab_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
@@ -32,6 +51,10 @@ def setup_cfg(args):
     cfg.MODEL.RETINANET.SCORE_THRESH_TEST = args.confidence_threshold
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = args.confidence_threshold
     cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = args.confidence_threshold
+
+    cfg.MODEL.ROI_HEADS.NUM_CLASSES = s_num_classes
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = s_score_thresh_test
+
     cfg.freeze()
     return cfg
 
@@ -45,6 +68,7 @@ def get_parser():
         help="path to config file",
     )
     parser.add_argument("--webcam", action="store_true", help="Take inputs from webcam.")
+    parser.add_argument("--camera", action="store_true", help="Take inputs from webcam.")
     parser.add_argument("--video-input", help="Path to video file.")
     parser.add_argument(
         "--input",
@@ -90,6 +114,22 @@ def test_opencv_video_format(codec, file_ext):
         return False
 
 
+def resize_with_aspect_ratio(image, width=None, height=None, inter=cv2.INTER_AREA):
+    dim = None
+    (h, w) = image.shape[:2]
+
+    if width is None and height is None:
+        return image
+    if width is None:
+        r = height / float(h)
+        dim = (int(w * r), height)
+    else:
+        r = width / float(w)
+        dim = (width, int(h * r))
+
+    return dim
+
+
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
     args = get_parser().parse_args()
@@ -129,7 +169,9 @@ if __name__ == "__main__":
                     out_filename = args.output
                 visualized_output.save(out_filename)
             else:
+                resize = resize_with_aspect_ratio(visualized_output.get_image()[:, :, ::-1], width=1280)
                 cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(WINDOW_NAME, resize)
                 cv2.imshow(WINDOW_NAME, visualized_output.get_image()[:, :, ::-1])
                 if cv2.waitKey(0) == 27:
                     break  # esc to quit
@@ -137,12 +179,33 @@ if __name__ == "__main__":
         assert args.input is None, "Cannot have both --input and --webcam!"
         assert args.output is None, "output not yet supported with --webcam!"
         cam = cv2.VideoCapture(0)
+        save_image = True
         for vis in tqdm.tqdm(demo.run_on_video(cam)):
+            # 640 x 480
+            resize = resize_with_aspect_ratio(vis, width=1280)
             cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(WINDOW_NAME, resize)
             cv2.imshow(WINDOW_NAME, vis)
+            if save_image:
+                cv2.imwrite("test.jpg", vis)
+                save_image = False
             if cv2.waitKey(1) == 27:
                 break  # esc to quit
         cam.release()
+        cv2.destroyAllWindows()
+    elif args.camera:
+        assert args.input is None, "Cannot have both --input and --camera!"
+        assert args.output is None, "output not yet supported with --camera!"
+        camera = camera_setup()
+
+        for vis in tqdm.tqdm(demo.run_on_IP_camera_video(camera)):
+            resize = resize_with_aspect_ratio(vis, height=800)
+            cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(WINDOW_NAME, resize)
+            cv2.imshow(WINDOW_NAME, vis)
+            if cv2.waitKey(1) == 27:
+                break  # esc to quit
+
         cv2.destroyAllWindows()
     elif args.video_input:
         video = cv2.VideoCapture(args.video_input)

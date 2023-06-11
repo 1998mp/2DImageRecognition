@@ -5,11 +5,34 @@ import multiprocessing as mp
 from collections import deque
 import cv2
 import torch
+import numpy as np
+from pypylon import pylon
 
+from setup import *
+
+from detectron2.config import CfgNode
 from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
+
+from detectron2.data.datasets import register_coco_instances
+from detectron2.data import MetadataCatalog, DatasetCatalog
+
+def resize_with_aspect_ratio(image, width=None, height=None):
+    dim = None
+    (h, w) = image.shape[:2]
+
+    if width is None and height is None:
+        return image
+    if width is None:
+        r = height / float(h)
+        dim = (int(w * r), height)
+    else:
+        r = width / float(w)
+        dim = (width, int(h * r))
+
+    return dim
 
 
 class VisualizationDemo(object):
@@ -21,9 +44,19 @@ class VisualizationDemo(object):
             parallel (bool): whether to run the model in different processes from visualization.
                 Useful since the visualization logic can be slow.
         """
-        self.metadata = MetadataCatalog.get(
-            cfg.DATASETS.TEST[0] if len(cfg.DATASETS.TEST) else "__unused"
-        )
+        dataset_name = s_dataset_name
+        metadata = s_metadata
+        json_file = s_json_file
+        image_root = s_image_root
+
+        register_coco_instances(dataset_name, metadata, json_file, image_root)
+
+        # self.metadata = MetadataCatalog.get(
+        #     cfg.DATASETS.TEST[0] if len(cfg.DATASETS.TEST) else "__unused"
+        # )
+        # self.metadata = MetadataCatalog.get(dataset_name)
+        self.metadata = MetadataCatalog.get(dataset_name).set(thing_classes=s_thing_classes)
+
         self.cpu_device = torch.device("cpu")
         self.instance_mode = instance_mode
 
@@ -128,6 +161,71 @@ class VisualizationDemo(object):
             for frame in frame_gen:
                 yield process_predictions(frame, self.predictor(frame))
 
+
+    def _frame_from_IP_camera(self, camera):
+        # camera.StartGrabbing()
+        # camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
+
+        camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+        # camera.StartGrabbing(pylon.GrabStrategy_LatestImages)
+        # camera.OutputQueueSize = 2
+
+        while camera.IsGrabbing():
+            grabResult = camera.RetrieveResult(2000, pylon.TimeoutHandling_ThrowException)
+
+            if grabResult.GrabSucceeded():
+                img = cv2.cvtColor(grabResult.Array, cv2.COLOR_BAYER_RG2RGB)
+                downsize = resize_with_aspect_ratio(img, width=400)
+                res = cv2.resize(img, dsize=downsize, interpolation=cv2.INTER_AREA)
+                yield res
+            # else:
+            #     break
+
+    def run_on_IP_camera_video(self, camera):
+        video_visualizer = VideoVisualizer(self.metadata, self.instance_mode)
+
+        def process_predictions(frame, predictions):
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if "panoptic_seg" in predictions:
+                panoptic_seg, segments_info = predictions["panoptic_seg"]
+                vis_frame = video_visualizer.draw_panoptic_seg_predictions(
+                    frame, panoptic_seg.to(self.cpu_device), segments_info
+                )
+            elif "instances" in predictions:
+                predictions = predictions["instances"].to(self.cpu_device)
+                vis_frame = video_visualizer.draw_instance_predictions(frame, predictions)
+            elif "sem_seg" in predictions:
+                vis_frame = video_visualizer.draw_sem_seg(
+                    frame, predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
+                )
+
+            # Converts Matplotlib RGB format to OpenCV BGR format
+            vis_frame = cv2.cvtColor(vis_frame.get_image(), cv2.COLOR_RGB2BGR)
+            return vis_frame
+
+        frame_gen = self._frame_from_IP_camera(camera)
+        if self.parallel:
+            buffer_size = self.predictor.default_buffer_size
+
+            frame_data = deque()
+
+            for cnt, frame in enumerate(frame_gen):
+                frame_data.append(frame)
+                self.predictor.put(frame)
+
+                if cnt >= buffer_size:
+                    frame = frame_data.popleft()
+                    predictions = self.predictor.get()
+                    yield process_predictions(frame, predictions)
+
+            while len(frame_data):
+                frame = frame_data.popleft()
+                predictions = self.predictor.get()
+                yield process_predictions(frame, predictions)
+        else:
+            for frame in frame_gen:
+                yield process_predictions(frame, self.predictor(frame))
 
 class AsyncPredictor:
     """

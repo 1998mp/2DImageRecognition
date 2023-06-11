@@ -1,3 +1,9 @@
+# Part of my master's thesis at BME
+
+Part of my master's thesis at BME is based on the following project, I didn't start from scratch. Mátyás Pelle
+
+In the **Other2DImageRecognition** folder you can find my other image processing (classification, object detection, semantic segmentation) experiments, modifications and trainings, which are not necessarily related to Detectron2.
+
 <img src=".github/Detectron2-Logo-Horz.svg" width="300" >
 
 <a href="https://opensource.facebook.com/support-ukraine">
